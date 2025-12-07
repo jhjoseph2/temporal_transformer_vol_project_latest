@@ -72,6 +72,11 @@ def prepare_vol_data(
     df = compute_log_returns(df, price_col=price_col)
     df = compute_realized_volatility(df, ret_col="log_ret", window=window)
 
+    # Drop initial NaNs in log returns and rvol
+    original_len = len(df)
+    df.dropna(inplace=True) 
+    print(f"Dropped {original_len - len(df)} NaN rows (startup period).")
+
     processed_path = Path(processed_path)
     processed_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(processed_path, index=False)
