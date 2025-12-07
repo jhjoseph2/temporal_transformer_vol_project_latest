@@ -1,0 +1,9 @@
+numpy
+pandas
+pyarrow
+torch
+scikit-learn
+matplotlib
+yfinance
+wrds
+psycopg2-binary
