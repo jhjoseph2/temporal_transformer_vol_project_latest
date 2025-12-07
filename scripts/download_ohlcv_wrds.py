@@ -93,7 +93,7 @@ def main():
     args = parser.parse_args()
 
     print("[INFO] Connecting to WRDS...")
-    conn = wrds.Connection(wrds_username='jj3476')
+    conn = wrds.Connection()
     print("[INFO] Connected. Querying CRSP...")
 
     df = download_crsp_ohlcv_for_ticker(
