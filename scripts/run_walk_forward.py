@@ -115,7 +115,7 @@ def main():
     final_actuals = np.concatenate(all_actuals)
     
     results_df = pd.DataFrame({'actual': final_actuals, 'predicted': final_preds})
-    out_path = Path(f"results/wfv_{cfg.embedding_type}.csv")
+    out_path = Path(f"results/wfv_{cfg.embedding_type}_{cfg.max_epochs}.csv")
     out_path.parent.mkdir(exist_ok=True)
     results_df.to_csv(out_path, index=False)
     logger.info(f"Saved Walk-Forward results to {out_path}")

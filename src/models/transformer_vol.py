@@ -54,9 +54,10 @@ class VolTransformer(nn.Module):
         # 4. Output Head
         self.out = nn.Linear(d_model, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         x: [batch, seq_len, n_features]
+        t: [batch, seq_len, 1] -> Actual continuous timestamps (e.g., normalized seconds)
         """
         batch_size, seq_len, _ = x.shape
         device = x.device
@@ -74,12 +75,13 @@ class VolTransformer(nn.Module):
         elif self.embedding_type == 'time2vec':
             # Create synthetic normalized time steps [0, 1] for the window
             # Shape: [batch, seq_len, 1]
-            t = torch.linspace(0, 1, seq_len, device=device).unsqueeze(0).unsqueeze(-1)
-            t = t.expand(batch_size, -1, -1)
+            if t is None:
+                # Fallback for Daily Data (Regular Intervals)
+                t = torch.linspace(0, 1, seq_len, device=x.device).unsqueeze(0).unsqueeze(-1)
+                t = t.expand(batch_size, -1, -1)
             
-            # Get Time2Vec embedding and ADD it to feature embedding
-            t_emb = self.time_embedding(t)
-            x_emb = x_emb + t_emb
+            # Now Time2Vec processes the ACTUAL irregular time intervals
+            x_emb = x_emb + self.time_embedding(t)
 
         # C. Handle Attention Bias (ALiBi)
         # src_mask shape requirements for PyTorch nn.MultiheadAttention: 
