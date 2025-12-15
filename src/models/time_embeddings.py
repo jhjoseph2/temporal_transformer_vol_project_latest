@@ -51,36 +51,40 @@ class Time2Vec(nn.Module):
         super().__init__()
         self.d_model = d_model
         
-        # Linear component parameters
-        self.w0 = nn.Parameter(torch.randn(1, 1)) # Shape explicitly for broadcasting
-        self.b0 = nn.Parameter(torch.randn(1))
+        # 1. Linear component (v0)
+        # Replaces w0 and b0. Input 1 dim -> Output 1 dim
+        self.linear0 = nn.Linear(1, 1)
         
-        # Periodic component parameters
-        # Usage of Uniform initialization is generally more stable for frequencies
-        self.w = nn.Parameter(torch.Tensor(d_model - 1))
-        self.b = nn.Parameter(torch.Tensor(d_model - 1))
+        # 2. Periodic component (v1)
+        # Replaces w and b. Input 1 dim -> Output d_model-1 dims
+        self.linear1 = nn.Linear(1, d_model - 1)
         
         self.reset_parameters()
 
     def reset_parameters(self):
-        # Initialize frequencies to be small to avoid high-freq noise start
-        nn.init.uniform_(self.w, 0, 1) 
-        nn.init.uniform_(self.b, 0, 2 * math.pi)
-        nn.init.normal_(self.w0, 0, 0.1)
-        nn.init.zeros_(self.b0)
+        # Initialize to match the logic of the original paper/implementation
+        
+        # Linear term: small weights, zero bias
+        nn.init.normal_(self.linear0.weight, mean=0.0, std=0.1)
+        nn.init.constant_(self.linear0.bias, 0.0)
+        
+        # Periodic term: frequencies (weights) and phase shifts (bias)
+        # Using uniform initialization helps cover a range of frequencies
+        nn.init.uniform_(self.linear1.weight, 0.0, 1.0)
+        nn.init.uniform_(self.linear1.bias, 0.0, 2 * math.pi)
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         """
         t: [batch, seq_len, 1]
         """
-        # Linear term
-        v0 = t * self.w0 + self.b0
+        # Safe linear projection (handles broadcasting internally)
+        v0 = self.linear0(t)
         
         # Periodic term
-        # Broadcasting: [B, S, 1] * [D-1] -> [B, S, D-1]
-        v1 = torch.sin(t * self.w + self.b)
+        v1 = torch.sin(self.linear1(t))
         
-        return torch.cat([v0, v1], dim=-1)
+        # Concatenate and force contiguous memory layout
+        return torch.cat([v0, v1], dim=-1).contiguous()
 
 class CTLPE(nn.Module):
     """

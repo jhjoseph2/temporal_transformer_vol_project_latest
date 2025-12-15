@@ -60,48 +60,43 @@ class VolTransformer(nn.Module):
     def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         x: [batch, seq_len, n_features]
-        t: [batch, seq_len, 1] -> Actual continuous timestamps (e.g., normalized seconds)
         """
         batch_size, seq_len, _ = x.shape
         device = x.device
 
-        # A. Feature Projection
-        x_emb = self.input_linear(x) # [batch, seq, d_model]
+        # --- 1. Standard Transformer Forward Pass ---
+        # A. Projection
+        x_emb = self.input_linear(x)
 
-        # B. Handle Additive Embeddings (Sinusoidal, Learned, Time2Vec)
-        if self.embedding_type == 'sinusoidal':
+        # B. Temporal Embeddings
+        if self.embedding_type in ['time2vec', 'ctlpe']:
+            if t is None:
+                t = torch.linspace(0, 1, seq_len, device=device).unsqueeze(0).unsqueeze(-1)
+                t = t.expand(batch_size, -1, -1)
+            x_emb = x_emb + self.time_embedding(t)
+        elif self.embedding_type == 'sinusoidal':
             x_emb = self.time_embedding(x_emb)
-            
         elif self.embedding_type == 'learned':
             x_emb = self.time_embedding(x_emb)
             
-        elif self.embedding_type in ['time2vec', 'ctlpe']:
-            # Create synthetic normalized time steps [0, 1] for the window
-            # Shape: [batch, seq_len, 1]
-            if t is None:
-                # Fallback for Daily Data (Regular Intervals)
-                t = torch.linspace(0, 1, seq_len, device=x.device).unsqueeze(0).unsqueeze(-1)
-                t = t.expand(batch_size, -1, -1)
-            
-            # Now Time2Vec processes the ACTUAL irregular time intervals
-            x_emb = x_emb + self.time_embedding(t)
-
-        # C. Handle Attention Bias (ALiBi)
-        # src_mask shape requirements for PyTorch nn.MultiheadAttention: 
-        # (batch * num_heads, seq_len, seq_len)
+        # C. ALiBi Mask
         src_mask = None
-        
         if self.embedding_type == 'alibi':
-            # 1. Generate the bias for one batch [num_heads, seq, seq]
             alibi_bias = get_alibi_bias(seq_len, self.n_heads, device)
-            
-            # 2. Repeat for the whole batch -> [batch * num_heads, seq, seq]
             src_mask = alibi_bias.repeat(batch_size, 1, 1)
 
-        # D. Transformer Encoding
-        # We pass the calculated mask here. If embedding_type != alibi, src_mask is None.
+        # D. Encoder
         x_enc = self.encoder(x_emb, mask=src_mask)
 
-        # E. Prediction Head (Pooling last token)
+        # E. Prediction Head
         last_token = x_enc[:, -1, :]
-        return self.out(last_token).squeeze(-1)
+        model_out = self.out(last_token).squeeze(-1) # [batch]
+        
+        # --- 2. THE RESIDUAL FIX (ResNet for Time Series) ---
+        # We assume the target variable (rvol) is the LAST feature column.
+        # Check your config: feature_cols = ["log_ret", "rvol"] -> rvol is at index -1.
+        naive_forecast = x[:, -1, -1] # The most recent known volatility
+        
+        # The model now only learns the DIFFERENCE (Innovation)
+        # Prediction = Naive + Learned_Change
+        return naive_forecast + model_out

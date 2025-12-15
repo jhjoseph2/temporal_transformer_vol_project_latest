@@ -1,110 +1,119 @@
 import argparse
-from pathlib import Path
-
-import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+import numpy as np
+from pathlib import Path
+from sklearn.linear_model import Ridge
+from torch.utils.data import DataLoader
 
-from src.data.load_prices import prepare_vol_data, train_val_test_split_indices
-from src.training.metrics import regression_metrics
+# Re-use your project's logic to ensure exact data matching
+from src.config import ExperimentConfig
+from src.data.vol_dataset import TimeSeriesVolDataset
+from src.data.splitter import ExpandingWindowSplitter
+from src.utils.logging import get_logger
 
+logger = get_logger("baseline_wfv")
 
-def build_dataset_for_baseline(df: pd.DataFrame, window: int = 21):
+def get_numpy_data(dataset):
     """
-    Very simple tabular baseline dataset:
-
-    - Features: past `window` days of realized vol (rvol).
-    - Target: today's realized vol.
+    Extracts X and y from the PyTorch dataset into Numpy arrays 
+    compatible with Scikit-Learn.
     """
-    df = df.copy()
-    if "rvol" not in df.columns:
-        raise ValueError("DataFrame must contain 'rvol' column for baselines.")
-
-    # drop early rows where rvol is NaN
-    df = df.dropna(subset=["rvol"]).reset_index(drop=True)
-
-    X_list = []
-    y_list = []
-
-    for i in range(window, len(df)):
-        past_rvol = df["rvol"].iloc[i - window : i].values  # shape (window,)
-        X_list.append(past_rvol)
-        y_list.append(df["rvol"].iloc[i])
-
-    X = np.vstack(X_list)
-    y = np.array(y_list)
-    return X, y
-
-
-def naive_baseline(y: np.ndarray) -> np.ndarray:
-    """
-    Naive baseline: y_hat_t = y_{t-1}. We'll implement this by shifting.
-    For the first point, we just copy y_0.
-    """
-    y_hat = np.empty_like(y)
-    y_hat[0] = y[0]
-    y_hat[1:] = y[:-1]
-    return y_hat
-
+    loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+    # Get all data in one big batch
+    for x, y in loader:
+        # x shape: [Batch, Seq, Feat] -> Flatten for Linear Reg: [Batch, Seq*Feat]
+        X_flat = x.numpy().reshape(x.shape[0], -1)
+        y_flat = y.numpy()
+        
+        # Also extract the "Last Rvol" for the Naive baseline
+        # Assuming Feature 1 is 'rvol' (check your config/dataset columns!)
+        # x is [Batch, Seq, Features]. If rvol is index 1:
+        # naive_pred = x[:, -1, 1] 
+        # But to be safe, let's assume Naive = "Value at t-1" which is usually the last target.
+        # Actually, standard Naive Vol is: Vol_t = Vol_{t-1}. 
+        # In our dataset, X includes rvol. Let's assume the last column is rvol.
+        last_val = x[:, -1, -1].numpy() 
+        
+        return X_flat, y_flat, last_val
+    return None, None, None
 
 def main():
-    parser = argparse.ArgumentParser(description="Week 1 baselines for vol forecasting")
-    parser.add_argument("--raw_csv", type=str, required=True,
-                        help="Path to raw daily OHLCV CSV file.")
-    parser.add_argument("--processed_path", type=str, default="data/processed/spy_daily.parquet",
-                        help="Path to save processed parquet.")
-    parser.add_argument("--window", type=int, default=21,
-                        help="Rolling window for realized volatility and features.")
-    parser.add_argument("--train_ratio", type=float, default=0.7)
-    parser.add_argument("--val_ratio", type=float, default=0.15)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="data/processed/spy_daily.parquet")
     args = parser.parse_args()
 
-    processed_path = Path(args.processed_path)
-    if not processed_path.exists():
-        print(f"[INFO] Processed file not found at {processed_path}. Running preprocessing...")
-        df = prepare_vol_data(
-            raw_csv_path=args.raw_csv,
-            processed_path=str(processed_path),
-            window=args.window,
-        )
-    else:
-        print(f"[INFO] Loading existing processed file from {processed_path}.")
-        df = pd.read_parquet(processed_path)
-
-    print(f"[INFO] Data shape after preprocessing: {df.shape}")
-
-    # Build tabular dataset: (X, y)
-    X, y = build_dataset_for_baseline(df, window=args.window)
-    n = len(y)
-    print(f"[INFO] Baseline dataset size: {n} samples.")
-
-    train_end, val_end = train_val_test_split_indices(
-        n, train_ratio=args.train_ratio, val_ratio=args.val_ratio
+    cfg = ExperimentConfig()
+    
+    # 1. Load Data
+    if not Path(args.data_path).exists():
+        logger.error("Data not found.")
+        return
+        
+    df = pd.read_parquet(args.data_path)
+    feature_cols = ["log_ret", "rvol"]
+    target_col = "rvol"
+    
+    # 2. Setup Same Splitter as Transformer
+    # MUST MATCH run_walk_forward.py EXACTLY
+    splitter = ExpandingWindowSplitter(
+        total_samples=len(df),
+        initial_train_size=500, 
+        test_size=120  # Use the Fixed size from your Day 7 update
     )
 
-    X_train, y_train = X[:train_end], y[:train_end]
-    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
-    X_test, y_test = X[val_end:], y[val_end:]
+    # Store results
+    naive_preds = []
+    linear_preds = []
+    actuals = []
 
-    # 1) Naive baseline (shifted y)
-    print("\n=== Naive baseline (shifted previous rvol) ===")
-    y_hat_naive = naive_baseline(y_test)
-    metrics_naive = regression_metrics(y_test, y_hat_naive)
-    print("Test metrics:", metrics_naive)
+    logger.info("Starting Walk-Forward Validation for Baselines...")
 
-    # 2) Linear regression on past rvol window
-    print("\n=== Linear Regression on past rvol window ===")
-    lr = LinearRegression()
-    lr.fit(X_train, y_train)
-    y_hat_lr = lr.predict(X_test)
-    metrics_lr = regression_metrics(y_test, y_hat_lr)
-    print("Test metrics:", metrics_lr)
+    for fold, (train_idx, val_idx, test_idx) in enumerate(splitter.split()):
+        # We only care about Train and Test for Baselines (No Validation needed for Linear Regression usually)
+        
+        # Build Datasets (Re-using your existing class guarantees alignment)
+        train_ds = TimeSeriesVolDataset(df, feature_cols, target_col, lookback=cfg.lookback, indices=train_idx)
+        test_ds = TimeSeriesVolDataset(df, feature_cols, target_col, lookback=cfg.lookback, indices=test_idx)
 
-    # Optional: print validation metrics too
-    y_hat_lr_val = lr.predict(X_val)
-    metrics_lr_val = regression_metrics(y_val, y_hat_lr_val)
-    print("Val metrics (Linear Regression):", metrics_lr_val)
+        # Convert to Numpy for Sklearn
+        X_train, y_train, _ = get_numpy_data(train_ds)
+        X_test, y_test, naive_test = get_numpy_data(test_ds)
 
+        if len(X_train) == 0 or len(X_test) == 0:
+            continue
+
+        # --- MODEL 1: LINEAR REGRESSION (Ridge) ---
+        # We use Ridge to prevent overfitting on the flattened high-dim features
+        model = Ridge(alpha=1.0)
+        model.fit(X_train, y_train)
+        pred_lin = model.predict(X_test)
+        
+        # --- MODEL 2: NAIVE (Random Walk) ---
+        # Predict y_t = y_{t-1} (The last known rvol in the input window)
+        pred_naive = naive_test
+
+        # Accumulate
+        linear_preds.append(pred_lin)
+        naive_preds.append(pred_naive)
+        actuals.append(y_test)
+        
+        logger.info(f"Fold {fold}: Processed {len(y_test)} samples.")
+
+    # 3. Save Combined Results
+    # Flatten list of arrays
+    final_linear = np.concatenate(linear_preds)
+    final_naive = np.concatenate(naive_preds)
+    final_actual = np.concatenate(actuals)
+
+    # Save Linear
+    df_lin = pd.DataFrame({'actual': final_actual, 'predicted': final_linear})
+    df_lin.to_csv("results/wfv_linear.csv", index=False)
+    
+    # Save Naive
+    df_naive = pd.DataFrame({'actual': final_actual, 'predicted': final_naive})
+    df_naive.to_csv("results/wfv_naive.csv", index=False)
+    
+    logger.info(f"Saved wfv_linear.csv and wfv_naive.csv with {len(final_actual)} rows.")
 
 if __name__ == "__main__":
     main()

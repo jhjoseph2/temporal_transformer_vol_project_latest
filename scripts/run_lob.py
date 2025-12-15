@@ -65,16 +65,18 @@ def main():
         model.train()
         train_loss = 0
         for batch in train_loader:
-            x = batch['x'].to(device)
-            t = batch['t'].to(device)
-            y = batch['y'].to(device)
+            x = batch['x'].to(device).to(device, non_blocking=True).contiguous()
+            t = batch['t'].to(device).to(device, non_blocking=True).contiguous()
+            y = batch['y'].to(device).to(device, non_blocking=True).contiguous()
             
             optimizer.zero_grad()
             pred = model(x, t)
             
             # y is [batch, 1], pred is [batch] -> squeeze y
             loss = loss_fn(pred, y.squeeze(-1))
+            optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_loss += loss.item()
             
@@ -83,9 +85,9 @@ def main():
         val_loss = 0
         with torch.no_grad():
             for batch in test_loader:
-                x = batch['x'].to(device)
-                t = batch['t'].to(device)
-                y = batch['y'].to(device)
+                x = batch['x'].to(device).to(device, non_blocking=True).contiguous()
+                t = batch['t'].to(device).to(device, non_blocking=True).contiguous()
+                y = batch['y'].to(device).to(device, non_blocking=True).contiguous()
                 
                 pred = model(x, t)
                 val_loss += loss_fn(pred, y.squeeze(-1)).item()
@@ -113,9 +115,9 @@ def main():
 
     with torch.no_grad():
         for batch in test_loader:
-            x = batch['x'].to(device)
-            t = batch['t'].to(device)
-            y = batch['y'].to(device)
+            x = batch['x'].to(device).to(device, non_blocking=True).contiguous()
+            t = batch['t'].to(device).to(device, non_blocking=True).contiguous()
+            y = batch['y'].to(device).to(device, non_blocking=True).contiguous()
             
             pred = model(x, t)
             
