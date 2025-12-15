@@ -32,17 +32,6 @@ ENV/
 .DS_Store
 
 
-data/raw/*
-data/processed/*
-
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-*.csv
-*.parquet
-*.xls
-*.xlsx
-
 *.pt
 *.pth
 *.ckpt
