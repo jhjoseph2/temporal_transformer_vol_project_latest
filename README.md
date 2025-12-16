@@ -1,38 +1,12 @@
-# Transformer Temporal Embeddings for Volatility Forecasting (Skeleton)
 
-This is a lightweight project skeleton for experimenting with temporal embeddings
-in Transformer-based models for realized volatility forecasting.
+# Transformer Temporal Embeddings for Volatility Forecasting
 
-## Structure
+This project investigates the efficacy of Transformer-based architectures for forecasting realized volatility in financial time series. A core challenge in applying Transformers to continuous time series data is effectively encoding temporal information. This repository provides a modular framework to experiment with and compare various temporal embedding strategies, moving beyond standard positional encodings used in NLP.
 
-- `data/raw/` — put your raw price CSV here (e.g. `spy_daily.csv`).
-- `data/processed/` — processed parquet with log returns and realized volatility.
-- `src/`
-  - `config.py` — global configuration dataclass.
-  - `utils/seed.py` — seed setting utility.
-  - `utils/logging.py` — basic logger helper.
-  - `data/load_prices.py` — data loading and realized volatility computation.
-  - `data/vol_dataset.py` — PyTorch Dataset for sequence-to-one vol forecasting.
-  - `models/time_embeddings.py` — (stubs) different temporal embedding modules.
-  - `models/transformer_vol.py` — (stub) Transformer model for vol forecasting.
-  - `training/metrics.py` — basic regression metrics (MSE/MAE).
-  - `training/loop.py` — (stub) generic training loop for Transformer.
-- `scripts/`
-  - `run_baselines.py` — Week 1 baselines (naive and simple regression).
-  - `train_transformer.py` — (stub) training script for Transformer experiments.
-- `notebooks/`
-  - empty placeholder for your own EDA / experiments.
+Key features include:
 
-## Quick start (Week 1)
+* **Multi-Embedding Support**: Compare purely relative mechanisms (**ALiBi**), continuous time representations (**Time2Vec**, **CTLPE**), and standard absolute encodings (**Sinusoidal**, **Learned**).
+* **Residual Forecasting**: The model is designed to predict the *innovation* (change) in volatility relative to a naive baseline (the previous period's volatility), stabilizing training and improving convergence.
+* **End-to-End Pipeline**: Includes tools for data ingestion, preprocessing (log returns & realized vol calculation), training, and evaluation.
 
-1. Put a daily price CSV (with at least columns `Date, Open, High, Low, Close, Volume`)
-   into `data/raw/spy_daily.csv`.
-2. Run the preprocessing and baselines:
-
-   ```bash
-   python scripts/run_baselines.py \
-       --raw_csv data/raw/spy_daily.csv \
-       --processed_path data/processed/spy_daily.parquet
-   ```
-
-3. Inspect the printed baseline metrics and then iterate.
+In order to run this project, make sure you have wrds account (or can use `download_ohlcv.py` for yfinance). Also download the fi-2010 dataset from `https://drive.google.com/drive/folders/1l_YpPE3x_-FgTfOB9AyXlKuR5SLcopmk?usp=sharing`, and put the downloaded data in folder (or whatever path you like as long as you put it in the args).
